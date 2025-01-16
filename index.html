@@ -262,6 +262,8 @@
 
 			import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer.js';
 			import { SimplexNoise } from 'three/addons/math/SimplexNoise.js';
+			import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+			import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 
 			// Texture width for simulation
 			const WIDTH = 128;
@@ -272,6 +274,7 @@
 
 			let container, stats;
 			let camera, scene, renderer;
+			let boat;
 			let mouseMoved = false;
 			const mouseCoords = new THREE.Vector2();
 			const raycaster = new THREE.Raycaster();
@@ -301,7 +304,8 @@
 				document.body.appendChild( container );
 
 				camera = new THREE.PerspectiveCamera( 75, window.innerWidth / window.innerHeight, 1, 3000 );
-				camera.position.set( 0, 200, 350 );
+			    camera.position.set( 0, 100, 250 );
+				
 				camera.lookAt( 0, 0, 0 );
 
 				scene = new THREE.Scene();
@@ -317,7 +321,7 @@
 				renderer = new THREE.WebGLRenderer();
 				renderer.setPixelRatio( window.devicePixelRatio );
 				renderer.setSize( window.innerWidth, window.innerHeight );
-				renderer.setAnimationLoop( animate );
+				renderer.setAnimationLoop( animateMouse );
 				container.appendChild( renderer.domElement );
 
 				stats = new Stats();
@@ -326,20 +330,7 @@
 				container.style.touchAction = 'none';
 				container.addEventListener( 'pointermove', onPointerMove );
 
-				document.addEventListener( 'keydown', function ( event ) {
-
-					// W Pressed: Toggle wireframe
-					if ( event.keyCode === 87 ) {
-
-						waterMesh.material.wireframe = ! waterMesh.material.wireframe;
-						waterMesh.material.needsUpdate = true;
-
-					}
-
-				} );
-
 				window.addEventListener( 'resize', onWindowResize );
-
 
 				const gui = new GUI();
 
@@ -384,6 +375,141 @@
 				createSpheres();
 
 				valuesChanger();
+
+// Instantiate a loader
+const loader = new GLTFLoader();
+
+// Variables for velocity, speed, throttle, and turn speed
+let velocity = new THREE.Vector3(0, 0, 0); // 3D velocity vector (x, y, z)
+let speed = 0; // Current speed of the boat (controlled by throttle)
+const maxSpeed = 0.5; // Maximum speed the boat can reach
+const throttleRate = 0.05; // Rate at which the speed changes when keys are pressed
+const brakeRate = 0.03; // Rate at which the boat slows down (deceleration)
+const turnSpeed = 0.05; // Speed of turning (rotation)
+
+// Water level (y = 0 for simplicity)
+const waterLevel = 0; // Define water surface at y = 0
+
+// Global variable to hold the boat model
+let boat;
+let movingForward = false; // Track if moving forward
+let movingBackward = false; // Track if moving backward
+
+// Load a resource
+loader.load(
+  'assets/models/boat.glb',
+  function (loadedBoat) {
+    boat = loadedBoat.scene; // Set the boat to the loaded model
+    scene.add(boat); // Add the boat to the scene
+
+    // Scale the boat (optional)
+    boat.scale.set(5, 5, 5); // Scale the boat up
+  },
+  function (xhr) {
+    console.log((xhr.loaded / xhr.total) * 100 + '% loaded');
+  },
+  function (error) {
+    console.log('An error happened while loading the boat model');
+  }
+);
+
+// Listen for keydown and keyup events
+const keys = {
+  forward: false,
+  backward: false,
+  left: false,
+  right: false
+};
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'w') keys.forward = true;
+  if (event.key === 's') keys.backward = true;
+  if (event.key === 'a') keys.left = true;
+  if (event.key === 'd') keys.right = true;
+});
+
+document.addEventListener('keyup', (event) => {
+  if (event.key === 'w') keys.forward = false;
+  if (event.key === 's') keys.backward = false;
+  if (event.key === 'a') keys.left = false;
+  if (event.key === 'd') keys.right = false;
+});
+
+// Animation loop
+function animate() {
+  requestAnimationFrame(animate);
+
+  // Throttle control (W/S)
+  if (keys.forward && !movingForward) {
+    speed = Math.min(speed + throttleRate, maxSpeed); // Accelerate forward (W -> toward stern)
+    movingForward = true;
+    movingBackward = false;
+  }
+
+  if (keys.backward && !movingBackward) {
+    speed = Math.min(speed + throttleRate, maxSpeed); // Accelerate backward (S -> toward bow)
+    movingBackward = true;
+    movingForward = false;
+  }
+
+  if (!keys.forward && !keys.backward) {
+    if (speed > 0) {
+      speed -= brakeRate; // Slow down forward motion
+    } else if (speed < 0) {
+      speed += brakeRate; // Slow down reverse motion
+    }
+  }
+
+  // Apply velocity based on the current speed and boat rotation
+  const forwardVector = new THREE.Vector3(0, 0, 1); // Default: move in positive Z axis (toward the stern)
+  forwardVector.applyEuler(boat.rotation); // Apply the boat's current rotation to the forward vector
+
+  // Adjust movement direction based on keys:
+  if (movingForward) {
+    // Moving forward - move in the direction of the boat's forward vector (toward the stern)
+    velocity.set(forwardVector.x * speed, 0, forwardVector.z * speed);
+  } else if (movingBackward) {
+    // Moving backward - move in the opposite direction of the boat's forward vector (toward the bow)
+    velocity.set(-forwardVector.x * speed, 0, -forwardVector.z * speed);
+  }
+
+  // Update boat rotation based on keys (A/D)
+  if (keys.left) {
+    boat.rotation.y += turnSpeed; // Turn left when key is pressed
+  }
+  if (keys.right) {
+    boat.rotation.y -= turnSpeed; // Turn right when key is pressed
+  }
+
+  // Apply velocity to the boat's position
+  if (boat) {
+    boat.position.add(velocity);
+
+    // Prevent the boat from going below the water level
+    if (boat.position.y < waterLevel) {
+      boat.position.y = waterLevel; // Set y position to water level
+    }
+  }
+
+  // Render the scene
+  renderer.render(scene, camera);
+}
+
+animate();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 			}
 
@@ -665,7 +791,7 @@
 
 			}
 
-			function animate() {
+			function animateMouse() {
 
 				render();
 				stats.update();
